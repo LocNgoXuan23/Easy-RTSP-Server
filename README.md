@@ -1,6 +1,6 @@
-# RTSP Server
+# Easy RTSP Server
 
-A Docker-based RTSP streaming server that publishes multiple video files as looping RTSP streams. Stream your local videos over RTSP protocol with minimal setup.
+Deploy an RTSP streaming server from any video files effortlessly. No complex configuration needed—just add your videos and run one command. Perfect for testing, development, or streaming your video collection.
 
 ## Features
 
@@ -8,7 +8,7 @@ A Docker-based RTSP streaming server that publishes multiple video files as loop
 - 📹 **Multiple Streams**: Stream multiple videos simultaneously
 - 🔄 **Auto-looping**: Videos automatically loop when finished
 - 🐳 **Docker-based**: Isolated environment with MediaMTX and FFmpeg
-- ⚙️ **Configurable**: Adjust FPS and resolution per your needs
+- ⚙️ **Configurable**: Adjust FPS and resolution to your needs
 
 ## Prerequisites
 
@@ -16,6 +16,14 @@ A Docker-based RTSP streaming server that publishes multiple video files as loop
 - **RTSP client** (e.g., VLC Media Player) for viewing streams
 
 ## Quick Start
+
+### 0. Make Scripts Executable
+
+Ensure the scripts have execute permissions:
+
+```bash
+chmod +x start_rtsp_streams.sh stop_rtsp_streams.sh
+```
 
 ### 1. Configure Video Paths
 
@@ -46,11 +54,13 @@ The script will:
 
 Open the RTSP URLs in VLC or any RTSP client:
 
-```
+```rtsp
 rtsp://127.0.0.1:8554/cam0
 rtsp://127.0.0.1:8554/cam1
 rtsp://127.0.0.1:8554/cam2
 ```
+
+You should see your videos streaming and looping automatically.
 
 > **Note**: Replace `127.0.0.1` with your server's IP address if accessing remotely.
 
@@ -121,9 +131,10 @@ Stops all running RTSP streams and containers.
 |-------|----------|
 | **Script permission denied** | Run `chmod +x start_rtsp_streams.sh stop_rtsp_streams.sh` |
 | **Video file not found** | Verify paths in `video_paths.txt` are correct and relative to project root |
-| **Cannot connect to stream** | Check containers are running: `docker compose ps` |
+| **Cannot connect to stream** | Check containers are running: `docker compose ps`. Verify MediaMTX is up: `docker ps | grep mediamtx` |
 | **Stream is choppy** | Ensure videos are properly encoded. The script handles preprocessing automatically |
 | **Port already in use** | Stop existing containers: `./stop_rtsp_streams.sh` |
+| **How to verify streams are working** | Check container logs: `docker compose logs streamer`. Test URL in VLC: `rtsp://127.0.0.1:8554/cam0` |
 
 ## Architecture
 
@@ -141,4 +152,4 @@ This project is provided as-is. Use at your own discretion.
 
 ---
 
-**Easy RTSP Server** - Made with ❤️ for easy RTSP streaming
+**Made with ❤️ for effortless RTSP streaming**
