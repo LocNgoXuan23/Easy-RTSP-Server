@@ -131,16 +131,41 @@ echo ""
 echo "[INFO] Starting MediaMTX and Streamer containers..."
 docker compose up -d mediamtx streamer
 
-# Wait a bit for containers to start
-sleep 3
+# Function to check if container is running
+check_container_running() {
+  local container_name=$1
+  local max_attempts=10
+  local attempt=0
+  
+  while [ $attempt -lt $max_attempts ]; do
+    local status=$(docker inspect "$container_name" --format='{{.State.Status}}' 2>/dev/null || echo "not_found")
+    
+    if [ "$status" = "running" ]; then
+      return 0
+    elif [ "$status" = "exited" ]; then
+      local exit_code=$(docker inspect "$container_name" --format='{{.State.ExitCode}}' 2>/dev/null || echo "unknown")
+      echo "[ERROR] Container $container_name exited with code: $exit_code"
+      docker logs "$container_name" --tail 20 2>&1 | sed 's/^/[LOG] /'
+      return 1
+    fi
+    
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  
+  echo "[ERROR] Container $container_name failed to start after ${max_attempts} seconds"
+  docker logs "$container_name" --tail 20 2>&1 | sed 's/^/[LOG] /'
+  return 1
+}
 
-# Check if containers are running
-if ! docker compose ps | grep -q "mediamtx.*Up"; then
+# Check if containers are running with retry logic
+echo "[INFO] Waiting for containers to start..."
+if ! check_container_running "mediamtx"; then
   echo "[ERROR] MediaMTX container failed to start!"
   exit 1
 fi
 
-if ! docker compose ps | grep -q "fake_cams_streamer.*Up"; then
+if ! check_container_running "fake_cams_streamer"; then
   echo "[ERROR] Streamer container failed to start!"
   exit 1
 fi
