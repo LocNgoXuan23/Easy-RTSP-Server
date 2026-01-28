@@ -1,3 +1,5 @@
 ./videos/car_number_plate1.mp4
 ./videos/Video xe máy - xe hơi chạy trên đường.mp4
 ./videos/faceid7.mp4
+./videos/Cháy nhà, 4 người chạy thoát, nạn nhân mắc kẹt đeo mặt nạ chờ cứu hộ - Tuổi Trẻ Online.mp4
+./videos/People, Commerce, Shop. Free Stock Video.mp4
