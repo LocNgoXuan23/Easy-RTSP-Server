@@ -1,9 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Script để start RTSP streams từ danh sách video paths
+# Script để start RTSP streams từ danh sách video paths VÀ/HOẶC RTSP sources
 # Usage: ./start_rtsp_streams.sh [<video1> <video2> ...] [--fps FPS] [--resolution WIDTHxHEIGHT]
 #        Nếu không có arguments, sẽ đọc từ video_paths.txt
+#
+# video_paths.txt hỗ trợ 3 loại entry:
+#   1. path/to/video.mp4              -> Video file, auto-named (cam0, cam1, ...)
+#   2. rtsp://user:pass@host/path     -> RTSP source, auto-named (cam0, cam1, ...)
+#   3. custom_name=path_or_rtsp_url   -> Custom named entry (cả video và RTSP)
+#
+# Ví dụ:
+#   videos/faceid7.mp4
+#   cam08=rtsp://fpt:Asg2026@20.34.234.208:554/cam/realmonitor?channel=1&subtype=0
+#   cam36=rtsp://fpt:Asg$2026@20.34.234.236:554/PSIA/streaming/channels/101
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -13,8 +23,75 @@ FPS="25"
 RESOLUTION="1920x1080"
 VIDEO_PATHS_FILE="${VIDEO_PATHS_FILE:-video_paths.txt}"
 
+# ==========================================
+# Arrays to store parsed entries
+# ==========================================
+# Video files: VIDEO_NAMES[i] = stream name, VIDEO_PATHS[i] = file path
+VIDEO_NAMES=()
+VIDEO_PATHS=()
+# RTSP sources: RTSP_NAMES[i] = stream name, RTSP_URLS[i] = RTSP URL
+RTSP_NAMES=()
+RTSP_URLS=()
+# All stream names (for duplicate check)
+ALL_STREAM_NAMES=()
+
+# ==========================================
+# Check if a value is an RTSP URL
+# ==========================================
+is_rtsp_url() {
+  local val="$1"
+  if [[ "$val" =~ ^rtsps?:// ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# ==========================================
+# Parse a single entry line from video_paths.txt
+# ==========================================
+# auto_idx is a global counter for auto-naming
+auto_idx=0
+
+parse_entry() {
+  local line="$1"
+  local name=""
+  local value=""
+
+  # Check if line has name=value format (name cannot contain = or /)
+  if [[ "$line" =~ ^([a-zA-Z0-9_-]+)=(.+)$ ]]; then
+    name="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+  else
+    # Auto-name
+    name="cam${auto_idx}"
+    value="$line"
+    auto_idx=$((auto_idx + 1))
+  fi
+
+  # Check for duplicate names
+  for existing_name in "${ALL_STREAM_NAMES[@]:-}"; do
+    if [ "$existing_name" = "$name" ]; then
+      echo "[ERROR] Duplicate stream name: $name"
+      echo "        Please use unique names for each entry in $VIDEO_PATHS_FILE"
+      exit 1
+    fi
+  done
+  ALL_STREAM_NAMES+=("$name")
+
+  # Classify: RTSP source or video file
+  if is_rtsp_url "$value"; then
+    RTSP_NAMES+=("$name")
+    RTSP_URLS+=("$value")
+  else
+    VIDEO_NAMES+=("$name")
+    VIDEO_PATHS+=("$value")
+  fi
+}
+
+# ==========================================
 # Parse arguments
-VIDEOS=()
+# ==========================================
+CLI_ARGS=()
 while [[ $# -gt 0 ]]; do
   case $1 in
     --fps)
@@ -26,37 +103,46 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     *)
-      VIDEOS+=("$1")
+      CLI_ARGS+=("$1")
       shift
       ;;
   esac
 done
 
-# If no videos provided as arguments, read from video_paths.txt
-if [ ${#VIDEOS[@]} -eq 0 ]; then
+# If CLI args provided, treat them all as video files (backward compatible)
+if [ ${#CLI_ARGS[@]} -gt 0 ]; then
+  for arg in "${CLI_ARGS[@]}"; do
+    parse_entry "$arg"
+  done
+else
+  # Read from video_paths.txt
   if [ ! -f "$VIDEO_PATHS_FILE" ]; then
-    echo "[ERROR] No video files provided and $VIDEO_PATHS_FILE not found!"
+    echo "[ERROR] No entries provided and $VIDEO_PATHS_FILE not found!"
     echo "Usage: $0 [<video1> <video2> ...] [--fps FPS] [--resolution WIDTHxHEIGHT]"
-    echo "       Or create $VIDEO_PATHS_FILE with video paths (one per line)"
-    echo "Example: $0 ./videos/test.mp4 ./videos/car.mp4 --fps 25 --resolution 1920x1080"
+    echo "       Or create $VIDEO_PATHS_FILE with video paths / RTSP URLs (one per line)"
+    echo ""
+    echo "Examples in $VIDEO_PATHS_FILE:"
+    echo "  videos/test.mp4                    # Video file (auto-named cam0)"
+    echo "  cam08=rtsp://user:pass@host/path   # RTSP source (named cam08)"
     exit 1
   fi
-  
-  echo "[INFO] Reading video paths from $VIDEO_PATHS_FILE..."
-  # Read video paths from file, ignoring comments and empty lines
+
+  echo "[INFO] Reading entries from $VIDEO_PATHS_FILE..."
   while IFS= read -r line || [ -n "$line" ]; do
-    # Remove leading/trailing whitespace
-    line=$(echo "$line" | xargs)
+    # Remove leading/trailing whitespace (pure bash, safe for special chars)
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
     # Skip empty lines and comments
-    if [ -n "$line" ] && [[ ! "$line" =~ ^[[:space:]]*# ]]; then
-      VIDEOS+=("$line")
+    if [ -n "$line" ] && [[ ! "$line" =~ ^# ]]; then
+      parse_entry "$line"
     fi
   done < "$VIDEO_PATHS_FILE"
-  
-  if [ ${#VIDEOS[@]} -eq 0 ]; then
-    echo "[ERROR] No valid video paths found in $VIDEO_PATHS_FILE!"
-    exit 1
-  fi
+fi
+
+# Check if we have any entries at all
+if [ ${#VIDEO_NAMES[@]} -eq 0 ] && [ ${#RTSP_NAMES[@]} -eq 0 ]; then
+  echo "[ERROR] No valid entries found!"
+  exit 1
 fi
 
 # ==========================================
@@ -262,32 +348,32 @@ should_skip_preprocess() {
   return 0
 }
 
-# Clean unused output files (selective clean)
+# Clean unused output files in videos_clean (selective clean - preserve cache)
 clean_unused_outputs() {
-  local videos_list=("$@")
-  local max_index=$(( ${#videos_list[@]} - 1 ))
+  local -a valid_names=("$@")
   
   echo "[INFO] Cleaning unused output files..."
   
   # Find all cam*.mp4 files in videos_clean
   shopt -s nullglob
-  local existing_files=(videos_clean/cam*.mp4)
+  local existing_files=(videos_clean/*.mp4)
   shopt -u nullglob
   
   local cleaned_count=0
   for output_file in "${existing_files[@]}"; do
-    # Extract cam index from filename (cam0.mp4 -> 0)
     local basename_file=$(basename "$output_file")
-    local cam_index=$(echo "$basename_file" | grep -o 'cam[0-9]*' | grep -o '[0-9]*' || echo "")
+    local base_name="${basename_file%.mp4}"
     
-    # Check if cam_index is valid number
-    if [ -z "$cam_index" ] || ! [[ "$cam_index" =~ ^[0-9]+$ ]]; then
-      continue
-    fi
+    # Check if this name is still in use
+    local found=false
+    for vname in "${valid_names[@]:-}"; do
+      if [ "$base_name" = "$vname" ]; then
+        found=true
+        break
+      fi
+    done
     
-    # Check if this index is still in use
-    if [ "$cam_index" -gt "$max_index" ]; then
-      # This cam index is not in current videos list - remove it
+    if [ "$found" = false ]; then
       echo "[INFO] Removing unused output: $output_file"
       docker run --rm -v "$SCRIPT_DIR/videos_clean:/videos_clean" --entrypoint /bin/sh lscr.io/linuxserver/ffmpeg:latest -c "rm -f /videos_clean/$basename_file /videos_clean/$basename_file.meta" 2>/dev/null || rm -f "$output_file" "${output_file}.meta"
       cleaned_count=$((cleaned_count + 1))
@@ -301,113 +387,213 @@ clean_unused_outputs() {
   fi
 }
 
+# ==========================================
+# Generate mediamtx.yml configuration
+# ==========================================
+generate_mediamtx_config() {
+  local config_file="$1"
+  
+  echo "[INFO] Generating MediaMTX configuration: $config_file"
+  
+  # Write base config
+  cat > "$config_file" << 'YAML_BASE'
+###############################################
+# MediaMTX Configuration (auto-generated)
+# Do NOT edit manually - generated by start_rtsp_streams.sh
+# Original backup: mediamtx.yml.bak
+###############################################
+
+logLevel: info
+
+protocols: [tcp]   # TCP for LAN stability
+
+readTimeout: 60s
+writeTimeout: 60s
+
+pathDefaults:
+  # RTSP source settings (for proxied RTSP streams)
+  rtspTransport: tcp
+  sourceOnDemand: no
+
+paths:
+  # Wildcard path: accepts any FFmpeg publisher (for video file streams)
+  all_others:
+    source: publisher
+YAML_BASE
+
+  # Append RTSP proxy paths if any
+  if [ ${#RTSP_NAMES[@]} -gt 0 ]; then
+    echo "" >> "$config_file"
+    echo "  # ======= RTSP Proxy Sources =======" >> "$config_file"
+    
+    for i in "${!RTSP_NAMES[@]}"; do
+      local name="${RTSP_NAMES[$i]}"
+      local url="${RTSP_URLS[$i]}"
+      
+      echo "  ${name}:" >> "$config_file"
+      # Use single quotes in YAML to handle special chars like $ in passwords
+      echo "    source: '${url}'" >> "$config_file"
+      echo "    sourceOnDemand: no" >> "$config_file"
+    done
+  fi
+  
+  echo "[INFO] MediaMTX config generated with ${#RTSP_NAMES[@]} RTSP proxy source(s)"
+}
+
+# ==========================================
+# MAIN EXECUTION
+# ==========================================
+
 echo "=========================================="
 echo "RTSP Stream Setup"
 echo "=========================================="
 echo "[INFO] FPS: $FPS"
 echo "[INFO] Resolution: $RESOLUTION"
-echo "[INFO] Number of videos: ${#VIDEOS[@]}"
+echo "[INFO] Video files: ${#VIDEO_NAMES[@]}"
+echo "[INFO] RTSP sources: ${#RTSP_NAMES[@]}"
+echo "[INFO] Total streams: $(( ${#VIDEO_NAMES[@]} + ${#RTSP_NAMES[@]} ))"
+echo ""
+
+# List all entries
+if [ ${#VIDEO_NAMES[@]} -gt 0 ]; then
+  echo "[INFO] Video file entries:"
+  for i in "${!VIDEO_NAMES[@]}"; do
+    echo "       ${VIDEO_NAMES[$i]} <- ${VIDEO_PATHS[$i]}"
+  done
+fi
+if [ ${#RTSP_NAMES[@]} -gt 0 ]; then
+  echo "[INFO] RTSP source entries:"
+  for i in "${!RTSP_NAMES[@]}"; do
+    # Mask password in URL for display
+    display_url="${RTSP_URLS[$i]}"
+    # Simple password masking: replace :password@ with :****@
+    display_url=$(echo "$display_url" | sed -E 's|(://[^:]+:)[^@]+(@)|\1****\2|')
+    echo "       ${RTSP_NAMES[$i]} <- ${display_url}"
+  done
+fi
 echo ""
 
 # Stop existing containers if running
 echo "[INFO] Stopping existing containers..."
 docker compose down >/dev/null 2>&1 || true
 
-# Create directories
-mkdir -p videos_raw videos_clean
+# ==========================================
+# Generate MediaMTX config (ALWAYS, before starting containers)
+# ==========================================
+generate_mediamtx_config "$SCRIPT_DIR/mediamtx.yml"
 
-# Clean videos_raw directory (always clean raw files)
-echo "[INFO] Cleaning videos_raw directory..."
-rm -f videos_raw/cam*.mp4 videos_raw/cam*.mkv videos_raw/cam*.mov videos_raw/cam*.avi videos_raw/cam*.ts
+# ==========================================
+# Process video files (skip if no video files)
+# ==========================================
+if [ ${#VIDEO_NAMES[@]} -gt 0 ]; then
+  # Create directories
+  mkdir -p videos_raw videos_clean
 
-# Clean unused output files in videos_clean (selective clean - preserve cache)
-clean_unused_outputs "${VIDEOS[@]}"
+  # Clean videos_raw directory (always clean raw files)
+  echo "[INFO] Cleaning videos_raw directory..."
+  rm -f videos_raw/cam*.mp4 videos_raw/cam*.mkv videos_raw/cam*.mov videos_raw/cam*.avi videos_raw/cam*.ts
+  # Also clean named files
+  for vname in "${VIDEO_NAMES[@]}"; do
+    rm -f "videos_raw/${vname}."* 2>/dev/null || true
+  done
 
-# Copy videos to videos_raw with cam0, cam1, ... naming
-echo "[INFO] Copying videos to videos_raw..."
-for i in "${!VIDEOS[@]}"; do
-  video="${VIDEOS[$i]}"
-  if [ ! -f "$video" ]; then
-    echo "[ERROR] Video file not found: $video"
-    exit 1
-  fi
-  
-  # Get file extension
-  ext="${video##*.}"
-  cam_name="cam${i}.${ext}"
-  cp "$video" "videos_raw/$cam_name"
-  echo "[INFO] Copied: $video -> videos_raw/$cam_name"
-done
+  # Clean unused output files in videos_clean (selective clean - preserve cache)
+  clean_unused_outputs "${VIDEO_NAMES[@]}"
 
-# Preprocess videos with resolution (with cache support)
-echo ""
-echo "[INFO] Preprocessing videos with FPS=$FPS and Resolution=$RESOLUTION..."
-for i in "${!VIDEOS[@]}"; do
-  video="${VIDEOS[$i]}"
-  ext="${video##*.}"
-  cam_name="cam${i}.${ext}"
-  input_file="videos_raw/$cam_name"
-  output_file="videos_clean/cam${i}.mp4"
-  meta_file="videos_clean/cam${i}.mp4.meta"
-  
-  # Get absolute path of original video
-  original_video_path=$(cd "$(dirname "$video")" && pwd)/$(basename "$video")
-  
-  # Get config values
-  current_fps="$FPS"
-  current_resolution="$RESOLUTION"
-  current_gop_sec="${GOP_SEC:-0.5}"
-  current_crf="${CRF:-23}"
-  current_preset="${PRESET:-veryfast}"
-  
-  # Check cache
-  if should_skip_preprocess "$input_file" "$output_file" "$meta_file" \
-                            "$current_fps" "$current_resolution" \
-                            "$current_gop_sec" "$current_crf" "$current_preset"; then
-    echo "[INFO] Skipping preprocessing for cam${i} (cache valid)"
-    echo "       Using cached: $output_file"
-    continue
-  fi
-  
-  echo "[INFO] Preprocessing: $cam_name -> cam${i}.mp4"
-  
-  docker run --rm \
-    -v "$SCRIPT_DIR/videos_raw:/videos_raw:ro" \
-    -v "$SCRIPT_DIR/videos_clean:/videos_clean" \
-    -v "$SCRIPT_DIR/scripts:/scripts:ro" \
-    -e FPS="$FPS" \
-    -e RESOLUTION="$RESOLUTION" \
-    -e GOP_SEC="${GOP_SEC:-0.5}" \
-    -e CRF="${CRF:-23}" \
-    -e PRESET="${PRESET:-veryfast}" \
-    --entrypoint /bin/bash \
-    lscr.io/linuxserver/ffmpeg:latest \
-    /scripts/preprocess_with_resolution.sh \
-    "/videos_raw/$cam_name" "/videos_clean/cam${i}.mp4" "$FPS" "$RESOLUTION"
-  
-  # Save metadata after successful preprocessing
-  if [ -f "$output_file" ]; then
-    input_hash=$(calculate_file_hash "$input_file")
-    if [ -n "$input_hash" ]; then
-      save_metadata "$meta_file" "$input_hash" "$original_video_path" \
-                    "$current_fps" "$current_resolution" \
-                    "$current_gop_sec" "$current_crf" "$current_preset"
-      echo "[INFO] Saved metadata for cam${i}"
-    else
-      echo "[WARNING] Failed to calculate hash for cam${i}, metadata not saved"
+  # Copy videos to videos_raw with stream name
+  echo "[INFO] Copying videos to videos_raw..."
+  for i in "${!VIDEO_NAMES[@]}"; do
+    video="${VIDEO_PATHS[$i]}"
+    stream_name="${VIDEO_NAMES[$i]}"
+    
+    if [ ! -f "$video" ]; then
+      echo "[ERROR] Video file not found: $video"
+      exit 1
     fi
-  else
-    echo "[WARNING] Output file not found after preprocessing cam${i}"
-  fi
-done
+    
+    # Get file extension
+    ext="${video##*.}"
+    raw_name="${stream_name}.${ext}"
+    cp "$video" "videos_raw/$raw_name"
+    echo "[INFO] Copied: $video -> videos_raw/$raw_name"
+  done
 
-echo ""
-echo "[INFO] Preprocessing completed!"
+  # Preprocess videos with resolution (with cache support)
+  echo ""
+  echo "[INFO] Preprocessing videos with FPS=$FPS and Resolution=$RESOLUTION..."
+  for i in "${!VIDEO_NAMES[@]}"; do
+    video="${VIDEO_PATHS[$i]}"
+    stream_name="${VIDEO_NAMES[$i]}"
+    ext="${video##*.}"
+    raw_name="${stream_name}.${ext}"
+    input_file="videos_raw/$raw_name"
+    output_file="videos_clean/${stream_name}.mp4"
+    meta_file="videos_clean/${stream_name}.mp4.meta"
+    
+    # Get absolute path of original video
+    original_video_path=$(cd "$(dirname "$video")" && pwd)/$(basename "$video")
+    
+    # Get config values
+    current_fps="$FPS"
+    current_resolution="$RESOLUTION"
+    current_gop_sec="${GOP_SEC:-0.5}"
+    current_crf="${CRF:-23}"
+    current_preset="${PRESET:-veryfast}"
+    
+    # Check cache
+    if should_skip_preprocess "$input_file" "$output_file" "$meta_file" \
+                              "$current_fps" "$current_resolution" \
+                              "$current_gop_sec" "$current_crf" "$current_preset"; then
+      echo "[INFO] Skipping preprocessing for ${stream_name} (cache valid)"
+      echo "       Using cached: $output_file"
+      continue
+    fi
+    
+    echo "[INFO] Preprocessing: $raw_name -> ${stream_name}.mp4"
+    
+    docker run --rm \
+      -v "$SCRIPT_DIR/videos_raw:/videos_raw:ro" \
+      -v "$SCRIPT_DIR/videos_clean:/videos_clean" \
+      -v "$SCRIPT_DIR/scripts:/scripts:ro" \
+      -e FPS="$FPS" \
+      -e RESOLUTION="$RESOLUTION" \
+      -e GOP_SEC="${GOP_SEC:-0.5}" \
+      -e CRF="${CRF:-23}" \
+      -e PRESET="${PRESET:-veryfast}" \
+      --entrypoint /bin/bash \
+      lscr.io/linuxserver/ffmpeg:latest \
+      /scripts/preprocess_with_resolution.sh \
+      "/videos_raw/$raw_name" "/videos_clean/${stream_name}.mp4" "$FPS" "$RESOLUTION"
+    
+    # Save metadata after successful preprocessing
+    if [ -f "$output_file" ]; then
+      input_hash=$(calculate_file_hash "$input_file")
+      if [ -n "$input_hash" ]; then
+        save_metadata "$meta_file" "$input_hash" "$original_video_path" \
+                      "$current_fps" "$current_resolution" \
+                      "$current_gop_sec" "$current_crf" "$current_preset"
+        echo "[INFO] Saved metadata for ${stream_name}"
+      else
+        echo "[WARNING] Failed to calculate hash for ${stream_name}, metadata not saved"
+      fi
+    else
+      echo "[WARNING] Output file not found after preprocessing ${stream_name}"
+    fi
+  done
 
-# Start mediamtx and streamer
+  echo ""
+  echo "[INFO] Preprocessing completed!"
+else
+  echo "[INFO] No video files to preprocess"
+  # Still create videos_clean dir (streamer expects it)
+  mkdir -p videos_clean
+fi
+
+# ==========================================
+# Start containers
+# ==========================================
 echo ""
-echo "[INFO] Starting MediaMTX and Streamer containers..."
-docker compose up -d mediamtx streamer
+echo "[INFO] Starting containers..."
 
 # Function to check if container is running
 check_container_running() {
@@ -436,36 +622,66 @@ check_container_running() {
   return 1
 }
 
-# Check if containers are running with retry logic
-echo "[INFO] Waiting for containers to start..."
+# Always start MediaMTX (handles both publisher streams and RTSP proxies)
+echo "[INFO] Starting MediaMTX container..."
+docker compose up -d mediamtx
+
+echo "[INFO] Waiting for MediaMTX to start..."
 if ! check_container_running "mediamtx"; then
   echo "[ERROR] MediaMTX container failed to start!"
   exit 1
 fi
 
-if ! check_container_running "fake_cams_streamer"; then
-  echo "[ERROR] Streamer container failed to start!"
-  exit 1
+# Start streamer only if we have video files
+if [ ${#VIDEO_NAMES[@]} -gt 0 ]; then
+  echo "[INFO] Starting Streamer container (for ${#VIDEO_NAMES[@]} video file(s))..."
+  docker compose up -d streamer
+
+  if ! check_container_running "fake_cams_streamer"; then
+    echo "[ERROR] Streamer container failed to start!"
+    exit 1
+  fi
+else
+  echo "[INFO] No video files - skipping Streamer container"
 fi
 
 # Wait a bit more for streams to be published
 sleep 2
 
+# ==========================================
+# Display all RTSP URLs
+# ==========================================
 echo ""
 echo "=========================================="
 echo "RTSP Streams are ready!"
 echo "=========================================="
 echo ""
-echo "RTSP URLs:"
-for i in "${!VIDEOS[@]}"; do
-  video="${VIDEOS[$i]}"
-  video_name="$(basename "$video")"
-  rtsp_url="rtsp://127.0.0.1:8554/cam${i}"
-  echo "  [$i] $video_name -> $rtsp_url"
-done
-echo ""
+
+if [ ${#VIDEO_NAMES[@]} -gt 0 ]; then
+  echo "Video File Streams (looped playback via FFmpeg):"
+  for i in "${!VIDEO_NAMES[@]}"; do
+    stream_name="${VIDEO_NAMES[$i]}"
+    video_file="$(basename "${VIDEO_PATHS[$i]}")"
+    rtsp_url="rtsp://127.0.0.1:8554/${stream_name}"
+    echo "  [VIDEO] ${stream_name}: $video_file -> $rtsp_url"
+  done
+  echo ""
+fi
+
+if [ ${#RTSP_NAMES[@]} -gt 0 ]; then
+  echo "RTSP Proxy Streams (live camera feed via MediaMTX proxy):"
+  for i in "${!RTSP_NAMES[@]}"; do
+    stream_name="${RTSP_NAMES[$i]}"
+    # Mask password in source URL for display
+    source_url="${RTSP_URLS[$i]}"
+    display_url=$(echo "$source_url" | sed -E 's|(://[^:]+:)[^@]+(@)|\1****\2|')
+    rtsp_url="rtsp://127.0.0.1:8554/${stream_name}"
+    echo "  [RTSP] ${stream_name}: ${display_url} -> $rtsp_url"
+  done
+  echo ""
+fi
+
 echo "You can now open these URLs in VLC or any RTSP client."
 echo ""
 echo "To stop all streams, run: ./stop_rtsp_streams.sh"
 echo ""
-

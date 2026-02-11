@@ -30,12 +30,9 @@ for f in "${files[@]}"; do
   name="$(basename "$f")"
   base="${name%.*}"
 
-  # Nếu file đã tên cam0/cam1... thì giữ nguyên; không thì tự gán cam<i>
-  if [[ "$base" =~ ^cam[0-9]+$ ]]; then
-    path="$base"
-  else
-    path="cam${i}"
-  fi
+  # Luôn dùng tên file (bỏ extension) làm RTSP path
+  # start_rtsp_streams.sh đã đặt tên file = stream name (cam0, cam1, cam08, ...)
+  path="$base"
 
   url="${RTSP_BASE}/${path}"
   echo "[INFO] Publish: $f -> $url"

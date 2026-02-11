@@ -1,5 +1,22 @@
-./videos/car_number_plate1.mp4
-./videos/Video xe máy - xe hơi chạy trên đường.mp4
-./videos/faceid7.mp4
-./videos/Cháy nhà, 4 người chạy thoát, nạn nhân mắc kẹt đeo mặt nạ chờ cứu hộ - Tuổi Trẻ Online.mp4
-./videos/People, Commerce, Shop. Free Stock Video.mp4
+# ==========================================
+# RTSP Stream Configuration
+# ==========================================
+# Supported formats:
+#   path/to/video.mp4              -> Video file (auto-named cam0, cam1, ...)
+#   rtsp://user:pass@host/path     -> RTSP source (auto-named cam0, cam1, ...)
+#   custom_name=path_or_url        -> Custom named entry
+#
+# Lines starting with # are comments
+# Empty lines are ignored
+# ==========================================
+
+# ===== Video Files =====
+# videos/faceid7.mp4
+
+# ===== RTSP Camera Sources =====
+cam08=rtsp://123.16.21.186:8554/cam0
+cam36=rtsp://fpt:Asg$2026@20.34.234.236:554/PSIA/streaming/channels/101
+cam37=rtsp://fpt:Asg$2026@20.34.234.237:554/PSIA/streaming/channels/101
+cam91=rtsp://fpt:Asg$2026@20.34.234.191:554/PSIA/streaming/channels/101
+cam99=rtsp://fpt:Asg$2026@20.34.234.99:554/PSIA/streaming/channels/101
+cam55=rtsp://fpt:Asg$2026@20.34.234.155:554/PSIA/streaming/channels/101
